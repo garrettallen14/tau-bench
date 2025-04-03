@@ -1,150 +1,99 @@
-# τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains
+# τ-bench: Modified for MT Benchmark Integration
 
-**Paper**: [https://arxiv.org/abs/2406.12045](https://arxiv.org/abs/2406.12045)
+This repository is a fork of [τ-bench](https://arxiv.org/abs/2406.12045) modified to work with the MT Benchmark evaluation framework.
 
-## Leaderboard
+## Modifications Made
 
-### Airline
+1. **Output Formatting**: Added formatting to match MT Benchmark schema
+2. **Configuration**: Simplified to use YAML config and minimal CLI arguments
+3. **Error Handling**: Fixed response cost tracking and directory creation
 
-| Strategy       | Pass^1 | Pass^2 | Pass^3 | Pass^4 |
-| -------------- | ------ | ------ | ------ | ------ |
-| [TC (claude-3-5-sonnet-20241022)](https://www.anthropic.com/news/3-5-models-and-computer-use)      | **0.460**     | **0.326**     | **0.263**     | **0.225**     |
-| [TC (gpt-4o)](https://platform.openai.com/docs/guides/function-calling)     | 0.420     | 0.273     | 0.220     | 0.200     |
-| [TC (claude-3-5-sonnet-20240620)](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)      | 0.360     | 0.224     | 0.169     | 0.139     |
-| [TC (mistral-large-2407)](https://docs.mistral.ai/capabilities/function_calling/)     | ??     | ??     | ??     | ??     |
-| [TC (gpt-4o-mini)](https://platform.openai.com/docs/guides/function-calling)     | 0.225     | 0.140     | 0.110     | 0.100     |
-| [Act](https://arxiv.org/abs/2210.03629) (gpt-4o)     | 0.365 | 0.217 | 0.160 | 0.140     |
-| [ReAct](https://arxiv.org/abs/2210.03629) (gpt-4o)     | 0.325 | 0.233 | 0.185 | 0.160     |
+## Input/Output Schema
 
-### Retail
+### Input Schema
+```json
+{
+    "dataset_name": "tau_bench",    // Which benchmark to run
+    "model_name": "gpt-4o",         // Model to evaluate
+    "subsets": "retail"             // Task subset to run (retail/airline)
+}
+```
 
-| Strategy       | Pass^1 | Pass^2 | Pass^3 | Pass^4 |
-| -------------- | ------ | ------ | ------ | ------ |
-| [TC (claude-3-5-sonnet-20241022)](https://www.anthropic.com/news/3-5-models-and-computer-use)      | **0.692**     | **0.576**     | **0.509**     | **0.462**     |
-| [TC (gpt-4o)](https://platform.openai.com/docs/guides/function-calling)     | 0.604     | 0.491     | 0.430     | 0.383     |
-| [TC (claude-3-5-sonnet-20240620)](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)      | 0.626     | 0.506     | 0.435     | 0.387     |
-| [TC (mistral-large-2407)](https://docs.mistral.ai/capabilities/function_calling/)     | ??     | ??     | ??     | ??     |
-| [TC (gpt-4o-mini)](https://platform.openai.com/docs/guides/function-calling)     | ??     | ??     | ??     | ??     |
-| [Act](https://arxiv.org/abs/2210.03629) (gpt-4o)     | ??     | ??     | ??     | ??     |
-| [ReAct](https://arxiv.org/abs/2210.03629) (gpt-4o)     | ??     | ??     | ??     | ??     |
+### Output Schema
+The benchmark produces formatted results in `./data/{dataset_name}_{timestamp}/`:
 
-*TC = `tool-calling` strategy (the function-calling strategy reported in the paper)
+1. **Trajectory Files**: `{model}_task{id}_trajectory.jsonl`
+   ```json
+   {"role": "system", "content": "You are a helpful assistant..."}
+   {"role": "user", "content": "Help me book a flight..."}
+   {"role": "assistant", "content": "I'd be happy to help you book a flight..."}
+   ```
+
+2. **Scores File**: `{model}_scores.jsonl`
+   ```json
+   {
+     "task-id": "task-1",
+     "prompt": "task description",
+     "result": "action1({...}),action2({...})",
+     "truth": "expected_action1({...}),expected_action2({...})",
+     "score": 1.0,
+     "duration": 100
+   }
+   ```
+
+## Running the Benchmark
+
+```bash
+python run.py --model openai/gpt-4o --task-ids 1 2 3
+```
+
+## Error Handling and Retries
+
+When running the benchmark, you may encounter network errors or API failures, especially with external model providers. The benchmark will output error messages for failed tasks. To handle these failures:
+
+1. **Retry Specific Task IDs**: If certain tasks fail, you can re-run just those specific tasks:
+   ```bash
+   python run.py --model openai/gpt-4o --task-ids 2  # Retry only task ID 2
+   ```
+
+2. **Common Errors**:
+   - SSL/Network errors: Usually temporary and can be resolved by retrying
+   - Rate limiting: Wait a few minutes before retrying
+   - Authentication errors: Check your API keys in the config file
+
+The formatted results will be updated with any successfully completed tasks.
+
+## Next Steps
+
+### 1. API Integration for Data Access
+
+We need to implement an API endpoint in the tau-bench Docker container to serve the `./data/` directory to go-evaluator. Options include:
+
+- **REST API**: Add a simple Flask/FastAPI server to expose endpoints for:
+  - Listing available benchmark runs
+  - Retrieving trajectory and score files
+  - Triggering new benchmark runs
+
+- **File System Mount**: Alternatively, configure Docker volume mounting to share the data directory directly with go-evaluator
+
+### 2. LLMServer Integration
+
+Replace the current litellm implementation with our LLMServer:
+
+1. Modify `tau_bench/agents/tool_calling_agent.py` to use our LLMServer instead of litellm
+2. Update `tau_bench/envs/user.py` to use our LLMServer for user simulation
+3. Configure proper authentication and routing between containers
+
+This approach will allow us to:
+- Use our own LLM infrastructure
+- Track token usage and costs centrally
+- Ensure consistent model behavior across benchmarks
 
 ## Setup
 
-1. Clone this repository:
-
-```bash
-git clone https://github.com/sierra-research/tau-bench && cd ./tau-bench
-```
-
-2. Install from source (which also installs required packages):
-
-```bash
-pip install -e .
-```
-
-3. Set up your OpenAI / Anthropic / Google / Mistral / AnyScale API keys as environment variables.
-
-```bash
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-GOOGLE_API_KEY=...
-MISTRAL_API_KEY=...
-```
-
-## Run
-
-Run a tool-calling agent on the τ-retail environment:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --user-model gpt-4o --user-model-provider openai --user-strategy llm --max-concurrency 10
-```
-
-Set max concurrency according to your API limit(s).
-
-To run specific tasks, use the `--task-ids` flag. For example:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --user-model gpt-4o --user-model-provider openai --user-strategy llm --max-concurrency 10 --task-ids 2 4 6
-```
-
-This command will run only the tasks with IDs 2, 4, and 6.
-
-## User simulators
-
-By default, we use `gpt-4o` as the user simulator with strategy `llm`. You can use other models by setting the `--user-model` flag, or other strategies by setting the `--user-strategy` flag. For example, run a tool-calling agent with a claude user simulator:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --max-concurrency 10 --user-model claude-3-5-sonnet-20240620 --user-model-provider anthropic --user-strategy llm
-```
-
-Other strategies:
-
-To run `react` user simulator:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --max-concurrency 10 --user-model gpt-4o --user-model-provider openai --user-strategy react
-```
-
-Example of a `react` user response:
-
-```md
-Thought:
-I should provide my name and zip code as I wasn't given an email address to use.
-
-User Response:
-Sure, my name is Yusuf Rossi, and my zip code is 19122.
-```
-
-To run `verify` user simulator:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --max-concurrency 10 --user-model gpt-4o --user-model-provider openai --user-strategy verify
-```
-
-This strategy uses a subsequent LLM verification step to check if the user simulator's response is satisfactory. If not, the user simulator will be prompted to generate a new response.
-
-To run `reflection` user simulator:
-
-```bash
-python run.py --agent-strategy tool-calling --env retail --model gpt-4o --model-provider openai --max-concurrency 10 --user-model gpt-4o --user-model-provider openai --user-strategy reflection
-```
-
-This strategy uses a subsequent LLM verification step to check if the user simulator's response is satisfactory. If not, the user simulator will be prompted to reflect on its response and generate a new response.
-
-## Auto error identification
-
-Often times, it is difficult and time consuming to manually identify specific error locations in trajectories as they can be long and the constraints can be complex. We have provided an auto error identification tool that can do the following:
-
-1. Fault assignment: determine the entity that is responsible for the fault (user, agent, environment)
-2. Fault type classification: classify the type of fault (goal_partially_completed, used_wrong_tool, used_wrong_tool_argument, took_unintended_action)
-
-Both of the labels are accompanied with a description.
-
-To run the auto error identification, run:
-
-```bash
-python auto_error_identification.py --env <airline/retail> --platform openai --results-path <the path to your results file here> --max-concurrency 16 --output-path test-auto-error-identification --max-num-failed-results 10
-```
-
-Please note that this feature utilizes an LLM, which may lead to inaccurate error identifications.
-
-*Notice: If an error is raised due to the structure of your results file, you may have to rerun the benchmark to produce a new results file. We have recently [rewritten](https://github.com/sierra-research/tau-bench/commit/043b544371757ebb3762b3d02a6675dfe0c41798) the benchmark to be more type-safe and extensible.
-
-## Historical trajectories
-
-τ-bench might be expensive to run. We have provided a set of historical trajectories for the airline and retail environments in `./historical_trajectories`.
-
-If you would like to contribute your historical trajectories to this benchmark, please submit a PR!
-
-## License
-
-See `./LICENSE`.
-
-## Contact
-
-Please submit issues or pull requests if you find problems with the benchmark.
+1. Clone this repository
+2. Install with `pip install -e .`
+3. Configure API keys in `.env`
 
 ## Citation
 
@@ -155,7 +104,5 @@ Please submit issues or pull requests if you find problems with the benchmark.
       year={2024},
       eprint={2406.12045},
       archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2406.12045}, 
+      primaryClass={cs.AI}
 }
-```

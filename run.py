@@ -1,101 +1,132 @@
 # Copyright Sierra
 
 import argparse
+import yaml
+import os
 from tau_bench.types import RunConfig
 from tau_bench.run import run
-from litellm import provider_list
-from tau_bench.envs.user import UserStrategy
+from typing import List, Optional
+import json
+import os
+from datetime import datetime
 
 
 def parse_args() -> RunConfig:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num-trials", type=int, default=1)
-    parser.add_argument(
-        "--env", type=str, choices=["retail", "airline"], default="retail"
-    )
     parser.add_argument(
         "--model",
         type=str,
+        required=True,
         help="The model to use for the agent",
     )
     parser.add_argument(
-        "--model-provider",
-        type=str,
-        choices=provider_list,
-        help="The model provider for the agent",
+        "--task-ids", 
+        type=int, 
+        nargs="+", 
+        required=True,
+        help="Run only the tasks with the given IDs"
     )
-    parser.add_argument(
-        "--user-model",
-        type=str,
-        default="gpt-4o",
-        help="The model to use for the user simulator",
-    )
-    parser.add_argument(
-        "--user-model-provider",
-        type=str,
-        choices=provider_list,
-        help="The model provider for the user simulator",
-    )
-    parser.add_argument(
-        "--agent-strategy",
-        type=str,
-        default="tool-calling",
-        choices=["tool-calling", "act", "react", "few-shot"],
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=0.0,
-        help="The sampling temperature for the action model",
-    )
-    parser.add_argument(
-        "--task-split",
-        type=str,
-        default="test",
-        choices=["train", "test", "dev"],
-        help="The split of tasks to run (only applies to the retail domain for now",
-    )
-    parser.add_argument("--start-index", type=int, default=0)
-    parser.add_argument("--end-index", type=int, default=-1, help="Run all tasks if -1")
-    parser.add_argument("--task-ids", type=int, nargs="+", help="(Optional) run only the tasks with the given IDs")
-    parser.add_argument("--log-dir", type=str, default="results")
-    parser.add_argument(
-        "--max-concurrency",
-        type=int,
-        default=1,
-        help="Number of tasks to run in parallel",
-    )
-    parser.add_argument("--seed", type=int, default=10)
-    parser.add_argument("--shuffle", type=int, default=0)
-    parser.add_argument("--user-strategy", type=str, default="llm", choices=[item.value for item in UserStrategy])
-    parser.add_argument("--few-shot-displays-path", type=str, help="Path to a jsonlines file containing few shot displays")
     args = parser.parse_args()
-    print(args)
-    return RunConfig(
-        model_provider=args.model_provider,
-        user_model_provider=args.user_model_provider,
-        model=args.model,
-        user_model=args.user_model,
-        num_trials=args.num_trials,
-        env=args.env,
-        agent_strategy=args.agent_strategy,
-        temperature=args.temperature,
-        task_split=args.task_split,
-        start_index=args.start_index,
-        end_index=args.end_index,
-        task_ids=args.task_ids,
-        log_dir=args.log_dir,
-        max_concurrency=args.max_concurrency,
-        seed=args.seed,
-        shuffle=args.shuffle,
-        user_strategy=args.user_strategy,
-        few_shot_displays_path=args.few_shot_displays_path,
-    )
+    
+    # Load config from yaml file
+    config_path = "config.yaml"
+    with open(config_path, "r") as f:
+        config_data = yaml.safe_load(f)
+    
+    # Override with command line arguments
+    config_data["model"] = args.model
+    config_data["task_ids"] = args.task_ids
+    
+    print("Configuration:")
+    for key, value in config_data.items():
+        print(f"  {key}: {value}")
+    
+    return RunConfig(**config_data)
+
+
+def format_results(config: RunConfig, unformatted_results_path: str) -> None:
+    """Format the unformatted results according to the MT Benchmark schema."""
+    # Create output directory with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dataset_name = f"tau_bench_{config.env}"
+    output_dir = f"./data/{dataset_name}_{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"\n📊 Formatting results from {unformatted_results_path}")
+    
+    # Load unformatted results
+    with open(unformatted_results_path, "r") as f:
+        results = json.load(f)
+    
+    scores = []
+    for result in results:
+        task_id = result["task_id"]
+        reward = result["reward"]
+        
+        # Create trajectory file
+        model_name = config.model.replace("/", "-")
+        trajectory_path = f"{output_dir}/{model_name}_task{task_id}_trajectory.jsonl"
+        with open(trajectory_path, "w") as f:
+            for message in result["traj"]:
+                f.write(json.dumps(message) + "\n")
+        
+        # Collect score information
+        task_info = result["info"]["task"]
+        
+        # Extract actual actions executed by the agent from conversation
+        actual_actions = []
+        for message in result["traj"]:
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                for tool_call in message["tool_calls"]:
+                    if tool_call.get("function"):
+                        name = tool_call["function"]["name"]
+                        args = json.loads(tool_call["function"]["arguments"])
+                        actual_actions.append(f"{name}({json.dumps(args)})")
+        
+        # Get the prompt (task instruction)
+        instruction = task_info.get("instruction", "")
+        
+        # Get the expected actions (ground truth) from the task definition
+        expected_actions = []
+        if "actions" in task_info:
+            for action in task_info["actions"]:
+                expected_actions.append(f"{action['name']}({json.dumps(action['kwargs'])})")
+        
+        score_entry = {
+            "task-id": f"task-{task_id}",
+            "prompt": instruction,
+            "result": ",".join(actual_actions) if actual_actions else "No actions executed",
+            "truth": ",".join(expected_actions) if expected_actions else "",
+            "score": reward,
+            "duration": result["info"].get("duration", 0) if "info" in result else 0
+        }
+        scores.append(score_entry)
+    
+    # Create scores file
+    model_name = config.model.replace("/", "-")
+    scores_path = f"{output_dir}/{model_name}_scores.jsonl"
+    with open(scores_path, "w") as f:
+        for score in scores:
+            f.write(json.dumps(score) + "\n")
+    
+    print(f"✅ Formatted results saved to {output_dir}")
+    print(f"  - Trajectory files: {model_name}_taskN_trajectory.jsonl")
+    print(f"  - Scores file: {model_name}_scores.jsonl")
 
 
 def main():
     config = parse_args()
-    run(config)
+    results = run(config)
+    
+    # Find the most recent results file
+    if results and len(results) > 0:
+        results_dir = config.log_dir
+        if os.path.exists(results_dir):
+            files = [f for f in os.listdir(results_dir) if f.endswith('.json')]
+            if files:
+                latest_file = max(files, key=lambda x: os.path.getmtime(os.path.join(results_dir, x)))
+                unformatted_results_path = os.path.join(results_dir, latest_file)
+                format_results(config, unformatted_results_path)
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ class RunConfig(BaseModel):
     task_split: str = "test"
     start_index: int = 0
     end_index: int = -1
-    task_ids: Optional[List[int]] = None
+    task_ids: List[int]
     log_dir: str = "results"
     max_concurrency: int = 1
     seed: int = 10

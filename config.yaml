@@ -1,0 +1,26 @@
+# TAU-Bench Configuration
+
+# Simulated User Model Configuration
+user_model: "openai/gpt-4o-2024-11-20"
+user_model_provider: "openrouter"
+model_provider: "openrouter"
+temperature: 1.0
+
+# Environment Configuration
+env: "airline"
+agent_strategy: "tool-calling"
+user_strategy: "llm"
+
+# Task Configuration
+num_trials: 1
+task_split: "test"
+task_ids: []
+shuffle: 0
+
+# System Configuration
+log_dir: "unformatted-results"
+max_concurrency: 1
+seed: 10
+
+# Optional Configuration
+few_shot_displays_path: null

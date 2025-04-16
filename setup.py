@@ -18,5 +18,8 @@ setup(
         "termcolor>=2.4.0",
         "numpy>=1.26.4",
         "litellm>=1.41.0",
+        "fastapi>=0.110.0",
+        "uvicorn>=0.29.0",
+        "pyyaml",
     ],
 )
